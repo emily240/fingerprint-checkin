@@ -375,9 +375,29 @@ html, body {
 
   /* ── 音频 ── */
   function ac() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    // iOS/Chrome HTTPS 需要显式 resume
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     return audioCtx;
   }
+
+  // 页面加载后预热 AudioContext（解锁 iOS 静音限制）
+  function unlockAudio() {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = ctx.createBuffer(1, 1, 22050);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start(0);
+    ctx.resume().then(() => {
+      if (!audioCtx) audioCtx = ctx;
+      else ctx.close();
+    });
+  }
+  document.addEventListener('touchstart', unlockAudio, { once: true });
+  document.addEventListener('mousedown', unlockAudio, { once: true });
 
   function startRise() {
     const c = ac();
