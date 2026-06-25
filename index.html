@@ -318,6 +318,7 @@ html, body {
 
     <div id="result">打卡成功，欢迎上班！</div>
     <div id="timer"></div>
+    <button id="replay-btn" onclick="resetGame()" style="display:none;margin-top:1.6rem;padding:10px 28px;border-radius:999px;border:1.5px solid rgba(255,255,255,0.5);background:rgba(255,255,255,0.15);color:#fff;font-size:14px;letter-spacing:0.08em;cursor:pointer;">再打一次卡</button>
   </div>
 
 </div>
@@ -373,32 +374,37 @@ html, body {
   initDots();
   drawDots();
 
-  /* ── 音频（iOS 兼容）── */
-  // iOS Safari 要求：AudioContext 必须在用户手势内同步创建 + 播放静音片段解锁
+  /* ── 音频（iOS 全兼容）── */
+  let speechUnlocked = false;
+
   function ac() {
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume();
-    }
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     return audioCtx;
   }
 
-  // 第一次触摸时：同步创建并解锁 AudioContext
+  // 每次触摸都重新解锁，防止 iOS 后台挂起后失效
   function iosUnlock() {
-    if (audioCtx && audioCtx.state === 'running') return;
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    // 播放 1 帧静音 —— iOS 必须这一步才能真正解锁
+    // 解锁 AudioContext
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const buf = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
     const src = audioCtx.createBufferSource();
     src.buffer = buf;
     src.connect(audioCtx.destination);
     src.start(0);
     audioCtx.resume();
+
+    // 解锁 Speech Synthesis（iOS 必须在用户手势内预调用一次）
+    if (!speechUnlocked && window.speechSynthesis) {
+      const silent = new SpeechSynthesisUtterance(' ');
+      silent.volume = 0;
+      window.speechSynthesis.speak(silent);
+      speechUnlocked = true;
+    }
   }
-  document.addEventListener('touchstart', iosUnlock, { once: true });
-  document.addEventListener('mousedown',  iosUnlock, { once: true });
+  // 不加 once，每次触摸都执行确保持续解锁
+  document.addEventListener('touchstart', iosUnlock, { passive: true });
+  document.addEventListener('mousedown',  iosUnlock);
 
   function startRise() {
     const c = ac();
@@ -720,6 +726,7 @@ html, body {
             // 第三步：语音结束后显示最终文字
             setTimeout(() => {
               el.innerHTML = '祝您工作顺利<br>距离下班仅有 480 分钟';
+              document.getElementById('replay-btn').style.display = 'inline-block';
             }, 2200);
           }, 1000);
         } else {
@@ -728,6 +735,34 @@ html, body {
       }, 1000);
     }, 220);
   }
+
+  window.resetGame = function () {
+    // 停止所有音效
+    stopAlarm();
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+    // 重置状态
+    done = false; holding = false;
+    clearInterval(countdownIv);
+    cancelAnimationFrame(rafId);
+
+    // 重置 UI
+    appEl.classList.remove('success');
+    appEl.style.background = '';
+    fpWrap.classList.remove('done', 'scanning');
+    document.querySelector('.fp-stroke').style.stroke = '';
+    document.getElementById('scan-mask').style.opacity = '0';
+    document.getElementById('progress-circle').style.strokeDashoffset = CIRC;
+    document.getElementById('top-label').style.opacity = '1';
+    document.getElementById('sub-label').style.opacity = '1';
+    document.getElementById('result').classList.remove('show');
+    document.getElementById('timer').classList.remove('show');
+    document.getElementById('timer').textContent = '';
+    document.getElementById('replay-btn').style.display = 'none';
+
+    // 重启粒子动画
+    if (!done) drawDots();
+  };
 })();
 </script>
 </body>
