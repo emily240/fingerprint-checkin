@@ -373,31 +373,32 @@ html, body {
   initDots();
   drawDots();
 
-  /* ── 音频 ── */
+  /* ── 音频（iOS 兼容）── */
+  // iOS Safari 要求：AudioContext 必须在用户手势内同步创建 + 播放静音片段解锁
   function ac() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
-    // iOS/Chrome HTTPS 需要显式 resume
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
     return audioCtx;
   }
 
-  // 页面加载后预热 AudioContext（解锁 iOS 静音限制）
-  function unlockAudio() {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const buf = ctx.createBuffer(1, 1, 22050);
-    const src = ctx.createBufferSource();
+  // 第一次触摸时：同步创建并解锁 AudioContext
+  function iosUnlock() {
+    if (audioCtx && audioCtx.state === 'running') return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // 播放 1 帧静音 —— iOS 必须这一步才能真正解锁
+    const buf = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+    const src = audioCtx.createBufferSource();
     src.buffer = buf;
-    src.connect(ctx.destination);
+    src.connect(audioCtx.destination);
     src.start(0);
-    ctx.resume().then(() => {
-      if (!audioCtx) audioCtx = ctx;
-      else ctx.close();
-    });
+    audioCtx.resume();
   }
-  document.addEventListener('touchstart', unlockAudio, { once: true });
-  document.addEventListener('mousedown', unlockAudio, { once: true });
+  document.addEventListener('touchstart', iosUnlock, { once: true });
+  document.addEventListener('mousedown',  iosUnlock, { once: true });
 
   function startRise() {
     const c = ac();
@@ -500,29 +501,42 @@ html, body {
     src.start(now); src.stop(now + sec);
   }
 
-  // 霸道总裁男中音
+  // 霸道总裁男中音（iOS 兼容）
   function playCEOVoice() {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
-    const speak = () => {
-      const utter = new SpeechSynthesisUtterance('Good morning, time to work');
-      utter.lang = 'en-US';
-      utter.pitch = 0.15;  // 低沉
-      utter.rate = 0.72;   // 沉稳有力
-      utter.volume = 1;
+
+    const utter = new SpeechSynthesisUtterance('Good morning, time to work');
+    utter.lang = 'en-US';
+    utter.pitch = 0.15;
+    utter.rate = 0.72;
+    utter.volume = 1;
+
+    const doSpeak = () => {
       const voices = window.speechSynthesis.getVoices();
-      const male = voices.find(v =>
-        /daniel|david|alex|fred|bruce|ralph|thomas|male/i.test(v.name) && /en/i.test(v.lang)
-      ) || voices.find(v => /en-US|en_US/i.test(v.lang))
+      // iOS 上优先 Daniel（英音男声），其次任意英文声音
+      const male = voices.find(v => /daniel/i.test(v.name))
+        || voices.find(v => /david|alex|fred|bruce|ralph|thomas/i.test(v.name) && /en/i.test(v.lang))
+        || voices.find(v => /en-US/i.test(v.lang))
         || voices.find(v => /en/i.test(v.lang));
       if (male) utter.voice = male;
+      // iOS Safari 需要在用户手势链内调用 speak，这里通过 setTimeout(0) 保持同步链
       window.speechSynthesis.speak(utter);
     };
-    // voices 可能需要等待加载
-    if (window.speechSynthesis.getVoices().length > 0) {
-      speak();
+
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length > 0) {
+      doSpeak();
     } else {
-      window.speechSynthesis.addEventListener('voiceschanged', speak, { once: true });
+      // iOS 上 voiceschanged 可能不触发，用轮询兜底
+      let tries = 0;
+      const poll = setInterval(() => {
+        tries++;
+        if (window.speechSynthesis.getVoices().length > 0 || tries > 20) {
+          clearInterval(poll);
+          doSpeak();
+        }
+      }, 100);
     }
   }
 
